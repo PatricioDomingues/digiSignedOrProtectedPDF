@@ -7,6 +7,10 @@ It provides two main services for PDF files:
 
 2) Identifies the PDF files which some kind of user-level protection. Specifically, the modules flags as interesting files, PDF files that forbids the "document assembly" and "modify".
 
+The digiSigned|ProtectedPDF module depends on two excellent external tools (not included in this repository):
+- JSignPDF (http://jsignpdf.sourceforge.net)
+- ExifTool (https://sno.phy.queensu.ca/~phil/exiftool/)
 
+The digiSigned|ProtectedPDF module requires that the full path of these two tools is properly configured. This is done in the settings interface (see INSTALL.PDF).
 
 
