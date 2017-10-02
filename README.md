@@ -1,5 +1,5 @@
 # digiSignedOrProtectedPDF
-File ingest module in jython for autopsy 4.4.1 or above
+File ingest module in jython for autopsy 4.4.1 or above.
 
 The digiSigned|ProtectedPDF module is a file ingest jython-based module for the Autopsy software.
 It provides two main services for PDF files:
