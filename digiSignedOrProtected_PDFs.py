@@ -1,5 +1,5 @@
 # coding=utf-8
-# @lastupdate: 2017-10-02 16h46:29
+# @lastupdate: 2018-05-26 20h49:49
 # Name: digiSignedOrProtectedPDFs
 # Type: file ingest module
 #
@@ -36,7 +36,7 @@
 # - Gui_Test_With_Settings(https://github.com/markmckinnon/Autopsy-Plugins/tree/master/Gui_Test_With_Settings) 
 #   from Mark McKinnon
 #
-# Thanks to both of them.
+# Thanks to all Of them.
 #
 # INFO #1
 # =======
@@ -92,7 +92,7 @@
 #=========
 # MIT License (MIT)
 # 
-# Copyright (c) 2017 Patricio Domingues
+# Copyright (c) 2017,2018 Patricio Domingues
 #
 # Permission is hereby granted, free of charge, to any person obtaining a 
 # copy of this software and associated documentation files (the "Software"), 
@@ -185,7 +185,11 @@ import random
 
 from subprocess import PIPE, Popen
 import json
+import threading
 
+##--------------------------------------------------------------------
+## TODO:2018-05-19:g_lock to avoid repeated references to "threading.lock"? 
+##--------------------------------------------------------------------
 
 #--------------------------------------
 # global variables
@@ -283,6 +287,47 @@ class FindSignedPDFsFilesIngestModuleFactory(IngestModuleFactoryAdapter):
     ## moduleName = "Signed PDFs (panel)"
     moduleName = "digiSignedOrProtectedPDF"
 
+    #--------------------------------------------
+    # Class variables
+    # The variables are shared among the various
+    # threads that might run the module.
+    # (Autopsy creates several threads to process
+    # data sources with a FileIngest module)
+    #--------------------------------------------
+    # Register start time
+    g_start_time = time.time()
+
+    # Count the number of processed PDF files
+    g_PDFFiles_count = 0
+
+    # Count the number of signed PDF files
+    g_signedPDFFiles_count = 0
+
+    # Count the number of inserted signed PDF files
+    g_PDFFilesInserted_count = 0
+
+    # Count the number of files
+    g_files_count = 0
+
+    # Count the number of files that are not PDF
+    g_NotPDFFiles_count = 0 
+
+    # Dictionary which keeps the full path of PDF files 
+    # (and other parameters)
+    g_fullPathPDFFiles_D = {}
+
+    # Dicitionary to keep permissions of PDF files
+    g_permission_PDFs_D = {}
+
+    # Permissions stats
+    g_permission_Stats_D = {}
+    g_permission_Stats_D[C_AssembleOFF_ModifyOFF] = 0
+    g_permission_Stats_D[C_AssembleON_ModifyOFF]  = 0
+    g_permission_Stats_D[C_AssembleON_ModifyON]   = 0
+    g_permission_Stats_D[C_AssembleOFF_ModifyON]  = 0
+
+
+    #--------------------------------------------
     def __init__(self):
         self.settings = None
 
@@ -361,6 +406,9 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         self.log(Level.INFO, "**INIT with parameters**")
         self.log(Level.INFO, Sep_S)
 
+
+
+
     # getter method for moduleDirname
     def getModuleDirname(self):
         return self._moduleDirname
@@ -394,45 +442,7 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
 
         self.context = context        
 
-        # Dictionary which keeps the full path of PDF files 
-        # (and other parameters)
-        self.m_fullPathPDFFiles_D = {}
-
-        # counter for the total number of files (including PDF files)
-        self.m_files_count = 0
-
-        #------------------------------------------------------------
-        # TODO: the stats for digitally signed files should 
-        # be kept in a dictionary
-        #------------------------------------------------------------
-        # counter for the total of files that are NOT PDF files
-        self.m_NotPDFFiles_count = 0
-
-        # Counter for the number of PDF files
-        self.m_PDFFiles_count = 0
-
-        # Counter for the total of signed PDF files
-        self.m_signedPDFFiles_count = 0
-
-        # Counter for the total of inserted files
-        self.m_PDFFilesInserted_count = 0
-
-        # Empty DICT to hold permission of PDF files
-        self.m_permission_PDFs_D = {}
-
-        # Dictionary to collect stats regarding the operations of 
-        # the PDF permissions module
-        self.m_permission_Stats_D = {}
-        self.m_permission_Stats_D[C_AssembleOFF_ModifyOFF] = 0
-        self.m_permission_Stats_D[C_AssembleON_ModifyOFF]  = 0
-        self.m_permission_Stats_D[C_AssembleON_ModifyON]   = 0
-        self.m_permission_Stats_D[C_AssembleOFF_ModifyON]  = 0
-
-        #---------------------------------------------------
-        # Create the directory where the module keeps 
-        # the PDF files
-        # 2017-08-02
-        #---------------------------------------------------
+        # TEMP directory
         self.m_tempDirectory = Case.getCurrentCase().getTempDirectory()
 
         self.m_baseDir = os.path.join(
@@ -495,20 +505,19 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # Msg_S = "finished: %d PDF files" % (self.m_PDFFiles_count)
         # self.log(Level.INFO, Msg_S)
 
-        # stop timer
-        self.m_time_end = time.time()
-        # elapsed time
-        elapsed_time_secs = self.m_time_end - self.m_time_start
+        # Elaspsed time
+        g_elapsed_time_secs = time.time() -\
+                FindSignedPDFsFilesIngestModuleFactory.g_start_time
 
         # LOG
         Log_S = "number of analyzed files %d "\
             "(%d not PDF, %d PDF [%d signed PDF]) -- %d inserted (%f secs)" %\
-             (self.m_files_count, 
-             self.m_NotPDFFiles_count,
-             self.m_PDFFiles_count, 
-             self.m_signedPDFFiles_count,
-             self.m_PDFFilesInserted_count,
-             elapsed_time_secs)
+            (FindSignedPDFsFilesIngestModuleFactory.g_files_count,
+             FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count,
+             FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count,
+             FindSignedPDFsFilesIngestModuleFactory.g_signedPDFFiles_count,
+             FindSignedPDFsFilesIngestModuleFactory.g_PDFFilesInserted_count, 
+             g_elapsed_time_secs)
         self.log(Level.INFO, Log_S)
 
         # Post a message to the ingest messages in box.
@@ -517,9 +526,23 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # Post message on central logger
         self.postIngestMessage(self.getModuleName(), msg_S)
 
+
+        #--------------------------------------------------
+        # DEBUG -- it always returns 1...
+        #--------------------------------------------------
+        num_threads = threading.active_count()
+        Log_S = "Number of threads=%d" % (num_threads)
+        self.log(Level.INFO, Log_S)
+        #--------------------------------------------------
+
+
         # Alias for self.m_permission_Stats_D dictionary 
         # (to have shorter lines of source code)
-        stats_D = self.m_permission_Stats_D
+
+        #-- start of exclusive zone --
+        lock = threading.Lock()
+        lock.acquire()
+        stats_D = FindSignedPDFsFilesIngestModuleFactory.g_permission_Stats_D
         num_permissions_PDFs = stats_D[C_AssembleOFF_ModifyOFF] +\
                                stats_D[C_AssembleON_ModifyOFF]  +\
                                stats_D[C_AssembleON_ModifyON]   +\
@@ -535,6 +558,9 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
                 stats_D[C_AssembleON_ModifyOFF],
                 stats_D[C_AssembleON_ModifyON],
                 stats_D[C_AssembleOFF_ModifyON])
+
+        lock.release()
+        #-- end of exclusive zone --
 
         self.log(Level.INFO, Log_S)
         self.postIngestMessage(self.getModuleName(), msg_S)
@@ -563,12 +589,8 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # build the CSV filename 
         ISO_datetime_S = get_now_timestamp_S()
 
-        random_int = random.randint(0, 999)
-
-        # filename = "%s---%s_" % (case_name_S,ISO_datetime_S) +\
-        #             str(random_int) + ".csv"
-        filename = "%s---%s_%04d.csv" % (case_name_S,ISO_datetime_S,random_int)
-
+        # Create name for CSV file
+        filename = "%s_SIGN_%s.csv" % (case_name_S,ISO_datetime_S)
 
         # make it a global path
         full_path_filename = os.path.join(self.getWorkDir(),filename)
@@ -582,14 +604,20 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         Debug_S = "filenamelen='%d'" % (len(full_path_filename))
         self.log(Level.INFO, Debug_S)
 
-        # Dump dict with results in CSV format to full_path_filename
-        ret = pdf_signed_dict2CSVfile(self.m_fullPathPDFFiles_D, 
-                                        col_sep_S, full_path_filename)
+        #----------------------------------------
+        # Dump the dictionary to CSV file
+        # This is done with a lock
+        #----------------------------------------
+        lock = threading.Lock()
+        lock.acquire()
+        ret = pdf_signed_dict2CSVfile(
+            FindSignedPDFsFilesIngestModuleFactory.g_fullPathPDFFiles_D,
+            col_sep_S, full_path_filename)
+        lock.release()
 
         # DEBUG
         Log_S = "CSV file created '%s'" % (filename)
         self.log(Level.INFO, Log_S)
-
         
         # Post to central module
         self.postIngestMessage(self.getModuleName(),Log_S)
@@ -609,12 +637,10 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # build the CSV filename 
         ISO_datetime_S = get_now_timestamp_S()
 
-        random_int = random.randint(0, 999)
-
-        # filename = "%s---%s_" % (case_name_S,ISO_datetime_S) +\
-        #             str(random_int) + ".csv"
-        filename = "%s_PERMISSIONS---%s_%04d.csv" %\
-                (case_name_S,ISO_datetime_S,random_int)
+        # Create name for CSV file to hold list of 
+        # PDF file with interesting owner PERMISSIONS
+        filename = "%s_PERMS_%s.csv" %\
+                (case_name_S,ISO_datetime_S)
 
         # make it a global path
         full_path_filename = os.path.join(self.getWorkDir(),filename)
@@ -628,9 +654,16 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         Debug_S = "[Permissions] filenamelen='%d'" % (len(full_path_filename))
         self.log(Level.INFO, Debug_S)
 
-        # Dump dict with results in CSV format to full_path_filename
-        ret = pdf_permissions_dict2CSVfile(self.m_permission_PDFs_D,
+        #----------------------------------------
+        # Dump dict with results in CSV 
+        # format to full_path_filename
+        #----------------------------------------
+        lock = threading.Lock()
+        lock.acquire()
+        ret = pdf_permissions_dict2CSVfile(
+                FindSignedPDFsFilesIngestModuleFactory.g_permission_PDFs_D,
                                         col_sep_S, full_path_filename)
+        lock.release()
 
         # DEBUG
         Log_S = "Permissions CSV file created '%s'" % (filename)
@@ -640,6 +673,39 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         self.postIngestMessage(self.getModuleName(),Log_S)
 
         return ret
+
+
+    #--------------------------------------------------------------------
+    # Increment the shared variable g_signedPDFFiles_count
+    # @param 
+    # @return
+    # 2018-05-15
+    #--------------------------------------------------------------------
+    def safe_inc_signedPDFFiles_count(self):
+        """Increment, with a lock, the shared class 
+           variable g_signedPDFFiles_count"""
+        # Acquire lock
+        lock = threading.Lock()
+        lock.acquire()
+        FindSignedPDFsFilesIngestModuleFactory.g_signedPDFFiles_count =\
+                FindSignedPDFsFilesIngestModuleFactory.g_signedPDFFiles_count+1
+        lock.release()
+
+    #--------------------------------------------------------------------
+    # Increment the shared variable g_PDFFilesInserted_count
+    # @param 
+    # @return
+    # 2018-05-15
+    #--------------------------------------------------------------------
+    def safe_inc_PDFFilesInserted_count(self):
+        """Increment, with a lock, the shared class 
+           variable g_PDFFilesInserted_count"""
+        # Acquire lock
+        lock = threading.Lock()
+        lock.acquire()
+        FindSignedPDFsFilesIngestModuleFactory.g_PDFFilesInserted_count =\
+             FindSignedPDFsFilesIngestModuleFactory.g_PDFFilesInserted_count+1
+        lock.release()
 
     #--------------------------------------------------------------------
     # Where the analysis is done.  
@@ -693,20 +759,36 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # alias for Module name
         ModuleName = FindSignedPDFsFilesIngestModuleFactory.moduleName
 
-        # Count number of files 
-        self.m_files_count = self.m_files_count + 1
+        #--------------------------------------------------------------------
+        # https://docs.python.org/2/library/threading.html
+        # http://www.jython.org/jythonbook/en/1.0/Concurrency.html
+        # https://stackoverflow.com/questions/68645/...
+        #                            are-static-class-variables-possible
+        #====================================================================
+        # Acquire lock
+        lock = threading.Lock()
+        lock.acquire()
+        FindSignedPDFsFilesIngestModuleFactory.g_files_count =\
+             FindSignedPDFsFilesIngestModuleFactory.g_files_count + 1
+
+        lock.release()
 
         # Log
         if C_Log_Level >= C_LOG_ANALYZE:
             JobID_S = "%s" % (self.context.getJobId())
             Log_S = "JobID:%s --- analyzing file '%s' (file #%d)" %\
-                (JobID_S, file.getName(), self.m_files_count)
+                (JobID_S, file.getName(), 
+                        FindSignedPDFsFilesIngestModuleFactory.g_files_count)
             self.log(Level.INFO, Log_S)
 
 
         if not self.is_pdf_file(file):
             # A file, but not a PDF file...
-            self.m_NotPDFFiles_count = self.m_NotPDFFiles_count + 1
+            lock = threading.Lock()
+            lock.acquire()
+            FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count =\
+                FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count + 1
+            lock.release()
 
             if C_Log_Level >= C_LOG_FILE_DETAILS:
                 Log_S = "not a PDF file '%s'" % (file.getName())
@@ -715,15 +797,20 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
             # not (considered as) a PDF file
             return IngestModule.ProcessResult.OK
 
-
-        self.m_PDFFiles_count = self.m_PDFFiles_count + 1
-
+        # another PDF file: update the counter
+        lock = threading.Lock()
+        lock.acquire()
+        FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count =\
+             FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count + 1
+        lock.release()
+        
         filename = file.getName()
 
         if C_Log_Level >= C_LOG_FILE_DETAILS:
             # LOG
             msg_S = "Processing PDF file: '" + filename +\
-                "' (#%d)" % (self.m_PDFFiles_count)
+                "' (#%d)" %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count)
             self.log(Level.INFO, msg_S)
 
         # Still here? PDF file
@@ -736,7 +823,11 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         temp_fullFilepath = os.path.join(self.getWorkDir(), temp_filepath)
 
         # save the full file name in the dictionary 
-        self.m_fullPathPDFFiles_D[fullFilePath_S] = [temp_fullFilepath]
+        # Acquire lock
+        lock = threading.Lock()
+        lock.acquire()
+        FindSignedPDFsFilesIngestModuleFactory.g_fullPathPDFFiles_D[fullFilePath_S] = [temp_fullFilepath]
+        lock.release()
 
         # Does the file already exist? (i.e, was it copied previously)
         if not os.path.isfile(temp_fullFilepath):
@@ -757,21 +848,30 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
                 # We're leaving - file could not be copied
                 return IngestModule.ProcessResult.ERROR
 
-
         else:
             # DEBUG
             Log_S = "file '%s' already exists" % (temp_fullFilepath)
             self.log(Level.INFO, Log_S)
 
+        #----------------------------------------
+        # Is the PDF file digitally signed? 
+        #----------------------------------------
         # Launch EXE to determine if the PDF file is signed or not
         EXE_signer_path = self.local_settings.get_EXE_signer_path()
         ret_signed_code = is_pdf_signed(EXE_signer_path, temp_fullFilepath)
 
+        #------------------------------
         # Append result to dictionary
-        self.m_fullPathPDFFiles_D[fullFilePath_S].append(ret_signed_code)
+        # (under lock)
+        #------------------------------
+        lock = threading.Lock()
+        lock.acquire()
+        FindSignedPDFsFilesIngestModuleFactory.g_fullPathPDFFiles_D[fullFilePath_S].append(ret_signed_code)
 
         ret_code_S = pdf_code_2_str(ret_signed_code)
-        self.m_fullPathPDFFiles_D[fullFilePath_S].append(ret_code_S)
+
+        FindSignedPDFsFilesIngestModuleFactory.g_fullPathPDFFiles_D[fullFilePath_S].append(ret_code_S)
+        lock.release()
 
         # DEBUG
         if C_Log_Level >= C_LOG_FILE_DETAILS:
@@ -783,13 +883,15 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
 
         if ret_signed_code == 0:
             Info_S = "properly signed"
-            self.m_signedPDFFiles_count = self.m_signedPDFFiles_count + 1
+            # Safe increment of shared variable g_signedPDFFiles_count
+            self.safe_inc_signedPDFFiles_count()
             add_as_artifact = True
-
         elif ret_signed_code >= 20 and\
                 ret_signed_code <= 66:
             Info_S = "signed but with problems"
-            self.m_signedPDFFiles_count = self.m_signedPDFFiles_count + 1
+
+            # Safe increment of shared variable g_signedPDFFiles_count
+            self.safe_inc_signedPDFFiles_count()
             add_as_artifact = True
 
         elif ret_signed_code == 10:
@@ -840,7 +942,9 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
             Msg_S = "***ADDING*** file '%s'" % (filename)
             self.log(Level.INFO, Msg_S)
 
-            self.m_PDFFilesInserted_count = self.m_PDFFilesInserted_count + 1
+            # Concurrently update the shared variable g_PDFFilesInserted_count 
+            self.safe_inc_PDFFilesInserted_count()
+
             # yes, add as attribute
             art = file.newArtifact(
                     BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT)
@@ -852,17 +956,15 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
 
             file_was_added = True
 
-        
-        #------------------------------
+        #----------------------------------------
         # PDF permissions module
         # Analysis done through exiftool
-        #------------------------------
+        #----------------------------------------
         if not file_was_added:
             # Check whether the file is already in the ArrayList
             if existingArtifacts_L and (C_NO_DUPLICATE==True):
                 # file already exists and we don't want duplicates
                 add_as_artifact = False
-
                 # LOG
                 Msg_S ="[PDF ACCESS] skipping file '%s': already exists" %\
                 (filename)
@@ -877,14 +979,45 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
                     User_Access_code = ret_L[1]
                     Encryption_flag  = ret_L[2]
 
+
+                    # DEBUG ---------------------------------------------------
+                    Msg_S = "[file '%s'] User_Access_flag=%s,"\
+                         "User_Access_code=%s,"\
+                         "Encryption_flag='%s'"%\
+                        (filename, User_Access_flag, 
+                                User_Access_code, Encryption_flag)
+                    self.log(Level.INFO, Msg_S)
+                    # DEBUG ---------------------------------------------------
+
+                    # DEBUG ---------------------------------------------------
+                    Msg_S = "AQUI:[file '%s'] User_Access_code & C_ASSEMBLE: %s,"\
+                            "User_Access_code & C_MODIFY: %s"%\
+                        (filename, User_Access_code & C_ASSEMBLE, 
+                         User_Access_code & C_MODIFY)
+                    self.log(Level.INFO, Msg_S)
+
+
+                    # DEBUG ---------------------------------------------------
+                    Msg_S = "AQUI2:[file '%s'] Encryption_flag=%s,"\
+                            "User_Access_flag=%s,"\
+                       "is_interesting_user_access(User_Access_code=%s)=%s"%\
+                        (filename, Encryption_flag, User_Access_flag, 
+                                User_Access_code,
+                                is_interesting_user_access(User_Access_code))
+                    self.log(Level.INFO, Msg_S)
+                    #----------------------------------------------------------
+
+
+                    # DEBUG ---------------------------------------------------
                     if (Encryption_flag or User_Access_flag) and\
                         (is_interesting_user_access(User_Access_code)):
                         # we have something interesting
                         user_access_S =\
                                 user_access_numeric_to_str(User_Access_code)
 
-                        self.m_PDFFilesInserted_count =\
-                            self.m_PDFFilesInserted_count + 1
+                        # Concurrently update the shared 
+                        # variable g_PDFFilesInserted_count 
+                        self.safe_inc_PDFFilesInserted_count()
                         
                         Encryption_S = boolean2str(Encryption_flag)
                         User_S = boolean2str(User_Access_flag)
@@ -901,8 +1034,18 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
                         self.log(Level.INFO, Msg_S)
 
                         # Update stat dictionary
-                        ## self.m_permission_Stats_D[user_access_S] =\
-                        ##        self.m_permission_Stats_D[user_access_S] + 1
+                        ## --start of exclusive zone--
+                        lock = threading.Lock()
+                        lock.acquire()
+                        # Alias since the "Find....g_permission_Stats_D" 
+                        # identifier is (awfully) long
+                        alias_g_permission_Stats_D =\
+                          FindSignedPDFsFilesIngestModuleFactory.g_permission_Stats_D
+                        alias_g_permission_Stats_D[user_access_S]=\
+                                alias_g_permission_Stats_D[user_access_S] + 1
+                        lock.release()
+                        ## --end of exclusive zone--
+
 
                         # yes, add as attribute
                         art = file.newArtifact(
@@ -943,11 +1086,17 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
     #--------------------------------------------------------------------
     def add_to_permissions_PDFs_D(self, fullFilename, encrypt_flag_S,
                                             user_access_flag_S, user_access_S):
-        """Add fullFilename to m_permission_PDFs_D dict"""
-        self.m_permission_PDFs_D[fullFilename] = [encrypt_flag_S]
-        self.m_permission_PDFs_D[fullFilename].append(user_access_flag_S)
-        self.m_permission_PDFs_D[fullFilename].append(user_access_S)
+        """Add fullFilename to 
+           FindSignedPDFFilesIngestModule.g_permission_PDFs_D dict"""
 
+        lock = threading.Lock()
+        lock.acquire()
+
+        FindSignedPDFsFilesIngestModuleFactory.g_permission_PDFs_D[fullFilename] = [encrypt_flag_S]
+        FindSignedPDFsFilesIngestModuleFactory.g_permission_PDFs_D[fullFilename].append(user_access_flag_S)
+        FindSignedPDFsFilesIngestModuleFactory.g_permission_PDFs_D[fullFilename].append(user_access_S)
+
+        lock.release()
 
     #--------------------------------------------------------------------
     # Post a message to the ingest messages in box.
@@ -997,6 +1146,7 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
 
         if file_extension.lower() == ".pdf":
             # extension is pdf: bingo!
+            ## FIXME: we should check the first 5 bytes, looking for "%PDF-"
             return True
 
         # still here? 
@@ -1540,19 +1690,55 @@ def is_exe(fpath):
 def is_pdf_signed(path_verifier,path_pdf_file):
     """check whether path_pdf_file is a signed PDF"""
 
-    # device null
-    devnull = open(os.devnull, 'w')
+    # True to have stdout and stderr of verifier.exe captured
+##    capture_stdout_stderr = False
+    capture_stdout_stderr = True
+
+    if not capture_stdout_stderr:
+        # device null
+        devnull = open(os.devnull, 'w')
+    else:
+        # We're going to capture STDOUT and STDERR
+        #-- start of exclusive zone --
+        lock = threading.Lock()
+        lock.acquire()
+        Sequence_S = ("%05d") % (FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count)
+        lock.release()
+         #-- end of exclusive zone --
+
+
+        # STDOUT and STDERR are going to be save in the case's TEMP directory
+        temp_directory_S = Case.getCurrentCase().getTempDirectory()
+        Out_filename = ("%s\out_%s.txt") % (temp_directory_S,Sequence_S)
+        Err_filename = ("%s\err_%s.txt") % (temp_directory_S,Sequence_S)
+
+        Out_fileno = open(Out_filename,"w")
+        Err_fileno = open(Err_filename,"w")
+
 
     ret_verifier = None
 
+    ## FIXME:check whether verifier.exe exists
+    ## (Do it once!)
     ## ret_is_exe = is_exe(path_verifier)
     ret_is_exe = True
     if ret_is_exe:
-        ret_verifier = subprocess.call(
-                [path_verifier,path_pdf_file],stdout=devnull,stderr=devnull)
+        if capture_stdout_stderr:
+            ret_verifier = subprocess.call(
+             [path_verifier,path_pdf_file],stdout=Out_fileno,stderr=Err_fileno)
+            Out_fileno.write(("ret_verifier=%s") % (ret_verifier))
+            Out_fileno.close()
+            Err_fileno.close()
+        else:
+            ret_verifier = subprocess.call(
+                  [path_verifier,path_pdf_file],stdout=devnull,stderr=devnull)
+            devnull.close()
 
     return ret_verifier
 
+#---------------------------------------
+# Return codes for verifier.exe (JSign)
+#---------------------------------------
 C_PDF_code_D = { 
         0: 'SIG_STAT_CODE_INFO_SIGNATURE_VALID', 
         10: 'SIG_STAT_CODE_WARNING_NO_SIGNATURE',
@@ -1617,9 +1803,10 @@ def pdf_permissions_dict2CSVfile(dict_D, col_sep_S, filename):
     with open(filename,'w') as f:
         # NOTE: if the BOM_UTF16_LE is added to the file, the CSV file
         # becomes mangled when read by EXCEL (I didn't try with libreoffice
-        # or other programs). So, the BOM below is commented out.
+        # or other programs). So, for now, the BOM below is commented out.
         # 
         # f.write(codecs.BOM_UTF16_LE)
+
 
         # Write header
         f.write(Header_S)
@@ -1645,6 +1832,9 @@ def pdf_permissions_dict2CSVfile(dict_D, col_sep_S, filename):
             Row_S = S.encode(encoding_S)
 
             f.write(Row_S)
+
+    # Done with the file
+    f.close()
 
     return 1
 
@@ -1711,6 +1901,9 @@ def pdf_signed_dict2CSVfile(dict_D, col_sep_S, filename):
             Row_S = S.encode(encoding_S)
 
             f.write(Row_S)
+
+    # Done with the file
+    f.close()
 
     return 1
 
