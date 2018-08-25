@@ -1,5 +1,5 @@
 # coding=utf-8
-# @lastupdate: 2018-05-26 20h49:49
+# @lastupdate: 2018-08-25 15h39:51
 # Name: digiSignedOrProtectedPDFs
 # Type: file ingest module
 #
@@ -178,7 +178,7 @@ import string
 import os.path
 import os
 import subprocess
-import datetime
+from datetime import datetime
 import time
 import random
 
@@ -207,7 +207,6 @@ C_PATH_EXIFTOOL="NONE"
 
 #--------------------------------------
 # Constants for user_access_to_int
-# 2017-09-03
 #--------------------------------------
 C_ASSEMBLE  = 1L << 0
 C_ANNOTATE  = 1L << 1
@@ -234,6 +233,9 @@ C_USER_ACCESS_D = {C_ASSEMBLE_S:C_ASSEMBLE,
                    C_MODIFY_S:C_MODIFY,
                    C_PRINT_S:C_PRINT}
 
+#====================================================================
+# Configuration of DEBUG
+#====================================================================
 #--------------------------------------
 # Levels of logging
 #--------------------------------------
@@ -245,6 +247,22 @@ C_LOG_ANALYZE = 3
 
 # Log details of every processed file
 C_LOG_FILE_DETAILS = 4
+
+# Log details of every executed external command (log stdout and stderr)
+C_LOG_EXEC_DETAILS = 5
+
+# Name of file to receive PDF filenames
+C_LOG_PDF_FNAMES     = "_log_name_PDF_files.log.txt"
+
+# Name of file to receive NOT PDF files
+C_LOG_NOT_PDF_FNAMES = "_log_name_NOT_PDF_files.log.txt"
+
+# Name of file to receive EVERYTHING filenames
+C_LOG_EVERY_FNAMES   = "_log_name_EVERY.log.txt"
+
+# Name of file to receive ALL counted filenames
+C_LOG_ALL_COUNTED_FNAMES = "_log_name_COUNTED.log.txt"
+
 
 
 #------------------------------------------------
@@ -274,9 +292,48 @@ C_AssembleOFF_ModifyON  = "AssembleOFF_ModifyON"
 C_FILES_WITH_PERMISSIONS_KEY="C_FILES_WITH_PERMISSIONS"
 C_FILES_AssembleON_ModifyOFF_KEY="C_FILES_AssembleON_ModifyOFF"
 
-
 #====================================================================
 # code
+#====================================================================
+#--------------------------------------------------------------------
+# Function to deal with special DEBUG log files
+#--------------------------------------------------------------------
+def open_log_file(fname):
+    """Create and init file 'fname' returning the file handle"""
+
+    temp_dirname = Case.getCurrentCase().getTempDirectory()
+    full_log_fname = os.path.join(temp_dirname,fname)
+
+    unbuffered = 0
+    log_F = open(full_log_fname,"w",unbuffered)
+    # Init the file
+    Row_S = "%s\n" % (Sep_S)
+    log_F.write(Row_S)
+    log_F.write("# '%s'\n" % (fname))
+    timestamp_S = datetime.now().strftime('# %Y-%m-%d_%Hh%Mm%Ss\n')
+    log_F.write(timestamp_S)
+    log_F.write(Row_S)
+
+    # return the file handle
+    return log_F
+
+def write_log_file(log_handle_F,msg_S):
+    timestamp_S = datetime.now().strftime('%Y-%m-%d_%Hh%Mm%Ss.%f')
+    log_S = "%s:%s\n" % (timestamp_S,msg_S)
+    log_handle_F.write(log_S.encode('utf-8'))
+
+
+def close_log_file(log_F):
+    """close log file"""
+    if log_F is None:
+        return None
+    else:
+        msg_S = "Closing log."
+        write_log_file(log_F,msg_S)
+        log_F.close()
+
+#====================================================================
+# classes
 #====================================================================
 
 
@@ -326,6 +383,22 @@ class FindSignedPDFsFilesIngestModuleFactory(IngestModuleFactoryAdapter):
     g_permission_Stats_D[C_AssembleON_ModifyON]   = 0
     g_permission_Stats_D[C_AssembleOFF_ModifyON]  = 0
 
+    # Log files for debugging
+    if C_Log_Level >= C_LOG_FILE_DETAILS:
+        g_log_pdf_names_F          = open_log_file(C_LOG_PDF_FNAMES)
+        g_log_not_pdf_names_F      = open_log_file(C_LOG_NOT_PDF_FNAMES)
+        g_log_every_fnames_F       = open_log_file(C_LOG_EVERY_FNAMES)
+        g_log_all_counted_fnames_F = open_log_file(C_LOG_ALL_COUNTED_FNAMES)
+    else:
+        g_log_pdf_names_F          = None
+        g_log_not_pdf_names_F      = None
+        g_log_every_fnames_F       = None
+        g_log_all_counted_fnames_F = None
+
+    # Message to be shown to the user at the end. 
+    # It only gets filled if a configuration error is detected
+    # (e.g., wrong path for VERIFIER.EXE)
+    g_final_msg = ""
 
     #--------------------------------------------
     def __init__(self):
@@ -384,6 +457,9 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
 
     # Name to be used for creating directory under ModuleOutput
     _moduleDirname = "SignedPDFs"
+
+
+    
 
     def log(self, level, msg):
         ## Troubles occurred with this code (it crashed...)
@@ -467,7 +543,47 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
             # Could not create DIR 'self.m_workDir'
             # Throw an IngestModule.IngestModuleException exception 
             Err_S = "Can't create DIR '%s'" % (self.m_workDir)
+            self.log(Level.SEVERE, Err_S )
+
+            lock = threading.Lock()
+            lock.acquire()
+            FindSignedPDFsFilesIngestModuleFactory.g_final_msg = Err_S
+            lock.release()
+
             raise IngestModuleException(Err_S)
+
+        # Check if signer EXE exists at the configured path
+        # If not, we abort the execution
+        EXE_signer_path = self.local_settings.get_EXE_signer_path()
+        if not os.path.isfile(EXE_signer_path):
+            Err1_S = "Cannot find PDF verifier EXE '%s'" % (EXE_signer_path)
+            Err2_S = "\nPlease configure the correct path for 'verifier.exe'"
+            Err_S = "%s\n%s" % (Err1_S,Err2_S)
+            self.log(Level.SEVERE, Err_S )
+
+            lock = threading.Lock()
+            lock.acquire()
+            FindSignedPDFsFilesIngestModuleFactory.g_final_msg = Err1_S
+            lock.release()
+
+            raise IngestModuleException(Err_S)
+
+        # Check if ExifTool EXE exists at the configured path
+        # If not we abort the execution
+        EXE_exiftool_path = self.local_settings.get_EXE_exiftool_path()
+        if not os.path.isfile(EXE_exiftool_path):
+            Err1_S = "Cannot find ExifTool '%s'" % (EXE_exiftool_path)
+            Err2_S = "Please configure the correct path for ExifTool"
+            Err_S = "%s\n%s" % (Err1_S,Err2_S)
+            self.log(Level.SEVERE, Err_S )
+
+            lock = threading.Lock()
+            lock.acquire()
+            FindSignedPDFsFilesIngestModuleFactory.g_final_msg = Err1_S
+            lock.release()
+
+            raise IngestModuleException(Err_S)
+
 
 
     #---------------------------------------------------------------
@@ -505,28 +621,6 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # Msg_S = "finished: %d PDF files" % (self.m_PDFFiles_count)
         # self.log(Level.INFO, Msg_S)
 
-        # Elaspsed time
-        g_elapsed_time_secs = time.time() -\
-                FindSignedPDFsFilesIngestModuleFactory.g_start_time
-
-        # LOG
-        Log_S = "number of analyzed files %d "\
-            "(%d not PDF, %d PDF [%d signed PDF]) -- %d inserted (%f secs)" %\
-            (FindSignedPDFsFilesIngestModuleFactory.g_files_count,
-             FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count,
-             FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count,
-             FindSignedPDFsFilesIngestModuleFactory.g_signedPDFFiles_count,
-             FindSignedPDFsFilesIngestModuleFactory.g_PDFFilesInserted_count, 
-             g_elapsed_time_secs)
-        self.log(Level.INFO, Log_S)
-
-        # Post a message to the ingest messages in box.
-        msg_S = Log_S
-
-        # Post message on central logger
-        self.postIngestMessage(self.getModuleName(), msg_S)
-
-
         #--------------------------------------------------
         # DEBUG -- it always returns 1...
         #--------------------------------------------------
@@ -535,45 +629,99 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         self.log(Level.INFO, Log_S)
         #--------------------------------------------------
 
+        # Elaspsed time
+        g_elapsed_time_secs = time.time() -\
+                FindSignedPDFsFilesIngestModuleFactory.g_start_time
 
-        # Alias for self.m_permission_Stats_D dictionary 
-        # (to have shorter lines of source code)
-
-        #-- start of exclusive zone --
         lock = threading.Lock()
         lock.acquire()
-        stats_D = FindSignedPDFsFilesIngestModuleFactory.g_permission_Stats_D
-        num_permissions_PDFs = stats_D[C_AssembleOFF_ModifyOFF] +\
-                               stats_D[C_AssembleON_ModifyOFF]  +\
-                               stats_D[C_AssembleON_ModifyON]   +\
-                               stats_D[C_AssembleOFF_ModifyON]
-                
-        Log_S = "number of permissions-based PDF files %d "\
-                "(AssembleOFF_ModifyOFF=%d,"\
-                "AssembleON_ModifyOFF=%d,"\
-                "AssembleON_ModifyON=%d,"\
-                "AssembleOFF_ModifyON=%d)" %\
-                (num_permissions_PDFs,
-                stats_D[C_AssembleOFF_ModifyOFF],
-                stats_D[C_AssembleON_ModifyOFF],
-                stats_D[C_AssembleON_ModifyON],
-                stats_D[C_AssembleOFF_ModifyON])
-
+        final_msg = FindSignedPDFsFilesIngestModuleFactory.g_final_msg
         lock.release()
-        #-- end of exclusive zone --
+        self.log(Level.INFO, "FINAL: '%s'" % (final_msg))
 
-        self.log(Level.INFO, Log_S)
-        self.postIngestMessage(self.getModuleName(), msg_S)
+        if len(final_msg) > 0:
+            # A final message exists (so, something wrong was detected)
+            # Show the final message
+            msg_to_show = "Got no results (%s)" % (final_msg)
+        else:
+            # LOG
+            msg_to_show = "number of analyzed files %d "\
+                "(%d PDF [%d signed PDF]) -- %d inserted (%f secs)" %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_files_count,
+    ##             FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count,
+                 FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count,
+                 FindSignedPDFsFilesIngestModuleFactory.g_signedPDFFiles_count,
+                 FindSignedPDFsFilesIngestModuleFactory.g_PDFFilesInserted_count, 
+                 g_elapsed_time_secs)
 
-        # write the dict with results to a CSV file 
-        # (if the option to do so is set)
-        if self.local_settings.get_create_csv_file_flag():
-            # CSV holding the list of SIGNED pdf files
-            self.write_signed_dict2CSVfile()
+        self.log(Level.INFO, msg_to_show)
+        # Post message on central logger
+        self.postIngestMessage(self.getModuleName(), msg_to_show)
 
-            # CSV file holding the list of PDF file with special 
-            # User Access permissions
-            self.write_permissions_dict2CSVfile()
+        if len(final_msg) == 0:
+            # Alias for self.m_permission_Stats_D dictionary 
+            # (to have shorter lines of source code)
+            #-- start of exclusive zone --
+            lock = threading.Lock()
+            lock.acquire()
+            stats_D = FindSignedPDFsFilesIngestModuleFactory.g_permission_Stats_D
+            num_permissions_PDFs = stats_D[C_AssembleOFF_ModifyOFF] +\
+                                   stats_D[C_AssembleON_ModifyOFF]  +\
+                                   stats_D[C_AssembleON_ModifyON]   +\
+                                   stats_D[C_AssembleOFF_ModifyON]
+                    
+            Log_S = "number of permissions-based PDF files %d "\
+                    "(AssembleOFF_ModifyOFF=%d,"\
+                    "AssembleON_ModifyOFF=%d,"\
+                    "AssembleON_ModifyON=%d,"\
+                    "AssembleOFF_ModifyON=%d)" %\
+                    (num_permissions_PDFs,
+                    stats_D[C_AssembleOFF_ModifyOFF],
+                    stats_D[C_AssembleON_ModifyOFF],
+                    stats_D[C_AssembleON_ModifyON],
+                    stats_D[C_AssembleOFF_ModifyON])
+
+            lock.release()
+            #-- end of exclusive zone --
+
+            self.log(Level.INFO, Log_S)
+            self.postIngestMessage(self.getModuleName(), Log_S)
+
+            # write the dict with results to a CSV file 
+            # (if the option to do so is set)
+            if self.local_settings.get_create_csv_file_flag():
+                # CSV holding the list of SIGNED pdf files
+                self.write_signed_dict2CSVfile()
+
+                # CSV file holding the list of PDF file with special 
+                # User Access permissions
+                self.write_permissions_dict2CSVfile()
+
+        #--------------------------------------------------
+        # DEBUG - close special log files
+        #--------------------------------------------------
+        if C_Log_Level >= C_LOG_FILE_DETAILS:
+            lock = threading.Lock()
+            lock.acquire()
+            #---
+            # Close special logfiles
+            close_log_file(
+                    FindSignedPDFsFilesIngestModuleFactory.g_log_pdf_names_F)
+            FindSignedPDFsFilesIngestModuleFactory.g_log_pdf_names_F = None
+
+            close_log_file(
+                FindSignedPDFsFilesIngestModuleFactory.g_log_not_pdf_names_F)
+            FindSignedPDFsFilesIngestModuleFactory.g_log_not_pdf_names_F = None
+
+            close_log_file(
+                FindSignedPDFsFilesIngestModuleFactory.g_log_every_fnames_F)
+            FindSignedPDFsFilesIngestModuleFactory.g_log_every_fnames_F = None
+
+            close_log_file(
+             FindSignedPDFsFilesIngestModuleFactory.g_log_all_counted_fnames_F)
+            FindSignedPDFsFilesIngestModuleFactory.g_log_all_counted_fnames_F=None
+            #---
+            lock.release()
 
 
     #--------------------------------------------------------------------
@@ -732,6 +880,23 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
 
         if self.context.fileIngestIsCancelled():
             return IngestModule.ProcessResult.OK
+
+        # Acquire lock
+        #---
+        lock = threading.Lock()
+        lock.acquire()
+
+        # Write to DEBUG log file
+        if C_Log_Level >= C_LOG_FILE_DETAILS:
+            Msg_S = "%d:'%s'" %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_files_count,
+                        file.getName())
+            file_F = \
+               FindSignedPDFsFilesIngestModuleFactory.g_log_every_fnames_F
+            write_log_file(file_F, Msg_S)
+        #---
+        lock.release()
+
         #------------------------------------------------------------
         # Skip non-files
         #------------------------------------------------------------
@@ -767,10 +932,19 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         #====================================================================
         # Acquire lock
         lock = threading.Lock()
+        #---
         lock.acquire()
-        FindSignedPDFsFilesIngestModuleFactory.g_files_count =\
-             FindSignedPDFsFilesIngestModuleFactory.g_files_count + 1
+        FindSignedPDFsFilesIngestModuleFactory.g_files_count += 1
 
+        # Write to DEBUG log file
+        if C_Log_Level >= C_LOG_FILE_DETAILS:
+            Msg_S = "%d:'%s'" %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_files_count,
+                        file.getName())
+            file_F = \
+               FindSignedPDFsFilesIngestModuleFactory.g_log_all_counted_fnames_F
+            write_log_file(file_F, Msg_S)
+        #---
         lock.release()
 
         # Log
@@ -786,8 +960,18 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
             # A file, but not a PDF file...
             lock = threading.Lock()
             lock.acquire()
-            FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count =\
-                FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count + 1
+            #---
+            FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count += 1
+
+            # Special log files ON?
+            if C_Log_Level >= C_LOG_FILE_DETAILS:
+                Msg_S = "%d:'%s'" %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count,
+                        file.getName())
+                file_F = \
+                  FindSignedPDFsFilesIngestModuleFactory.g_log_not_pdf_names_F
+                write_log_file(file_F, Msg_S)
+            #---
             lock.release()
 
             if C_Log_Level >= C_LOG_FILE_DETAILS:
@@ -800,8 +984,19 @@ class FindSignedPDFFilesIngestModule(FileIngestModule):
         # another PDF file: update the counter
         lock = threading.Lock()
         lock.acquire()
-        FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count =\
-             FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count + 1
+        #---
+        FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count += 1
+
+        if C_Log_Level >= C_LOG_FILE_DETAILS:
+            # Special DEBUG log file
+            Msg_S = "%d:'%s'" %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count,
+                        file.getName())
+            file_F = \
+               FindSignedPDFsFilesIngestModuleFactory.g_log_pdf_names_F
+            write_log_file(file_F, Msg_S)
+
+        #---
         lock.release()
         
         filename = file.getName()
@@ -1690,49 +1885,57 @@ def is_exe(fpath):
 def is_pdf_signed(path_verifier,path_pdf_file):
     """check whether path_pdf_file is a signed PDF"""
 
-    # True to have stdout and stderr of verifier.exe captured
-##    capture_stdout_stderr = False
-    capture_stdout_stderr = True
+    #------------------------------------------------------
+    # C_Log_Level controls whether we capture or not 
+    # STDOUT and STDERR from the "is digitally signed" test
+    # If captured, STDOUT and STDERR is written in individual 
+    # text files (two text files per EXEC: one for STDOUT and 
+    # another one for STDERR).The text files are written in 
+    # the case's TEMP directory
+    #------------------------------------------------------
+    if C_Log_Level >= C_LOG_EXEC_DETAILS:
+        capture_stdout_stderr = True
+    else:
+        capture_stdout_stderr = False
 
     if not capture_stdout_stderr:
         # device null
         devnull = open(os.devnull, 'w')
+        Out_fileno = devnull
+        Err_fileno = devnull
     else:
-        # We're going to capture STDOUT and STDERR
+        # We're going to capture STDOUT and STDERR to a file (FULL DEBUG)
         #-- start of exclusive zone --
         lock = threading.Lock()
         lock.acquire()
-        Sequence_S = ("%05d") % (FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count)
+        Sequence_S = ("%05d") %\
+                (FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count)
         lock.release()
          #-- end of exclusive zone --
 
 
         # STDOUT and STDERR are going to be save in the case's TEMP directory
         temp_directory_S = Case.getCurrentCase().getTempDirectory()
-        Out_filename = ("%s\out_%s.txt") % (temp_directory_S,Sequence_S)
-        Err_filename = ("%s\err_%s.txt") % (temp_directory_S,Sequence_S)
+        Out_filename = ("%s\out_is_signed_%s.txt") %\
+                                    (temp_directory_S,Sequence_S)
+        Err_filename = ("%s\err_is_signed_%s.txt") %\
+                    (temp_directory_S,Sequence_S)
 
         Out_fileno = open(Out_filename,"w")
         Err_fileno = open(Err_filename,"w")
 
-
     ret_verifier = None
 
-    ## FIXME:check whether verifier.exe exists
-    ## (Do it once!)
-    ## ret_is_exe = is_exe(path_verifier)
-    ret_is_exe = True
-    if ret_is_exe:
-        if capture_stdout_stderr:
-            ret_verifier = subprocess.call(
+    if capture_stdout_stderr:
+        ret_verifier = subprocess.call(
              [path_verifier,path_pdf_file],stdout=Out_fileno,stderr=Err_fileno)
-            Out_fileno.write(("ret_verifier=%s") % (ret_verifier))
-            Out_fileno.close()
-            Err_fileno.close()
-        else:
-            ret_verifier = subprocess.call(
+        Out_fileno.write(("ret_verifier=%s") % (ret_verifier))
+        Out_fileno.close()
+        Err_fileno.close()
+    else:
+        ret_verifier = subprocess.call(
                   [path_verifier,path_pdf_file],stdout=devnull,stderr=devnull)
-            devnull.close()
+        devnull.close()
 
     return ret_verifier
 
